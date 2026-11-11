@@ -5,3 +5,5 @@ qrcode
 gunicorn
 python-dotenv
 requests
+Flask-SQLAlchemy
+SQLAlchemy
