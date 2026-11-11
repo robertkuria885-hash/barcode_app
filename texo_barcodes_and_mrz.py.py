@@ -1,1 +1,0 @@
-python texo_barcodes_and_mrz.py
