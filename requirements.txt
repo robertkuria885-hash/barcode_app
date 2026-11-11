@@ -4,3 +4,4 @@ Pillow
 qrcode
 gunicorn
 python-dotenv
+requests
