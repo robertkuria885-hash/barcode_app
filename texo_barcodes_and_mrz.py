@@ -717,10 +717,6 @@ def verify_usdt_topup():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Verification error: {str(e)}'}), 500
-
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
         # Automatically patch SQLite table columns if migrating from an older DB version
         try:
             db.session.execute(db.text('ALTER TABLE active_checkout_session ADD COLUMN temp_session_id VARCHAR(100);'))
