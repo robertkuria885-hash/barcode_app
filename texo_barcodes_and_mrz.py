@@ -42,36 +42,7 @@ db = SQLAlchemy(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
-# --- AUTOMATIC TABLE CREATION ON APP STARTUP ---
-with app.app_context():
-    db.create_all()
-    try:
-        db.session.execute(db.text('ALTER TABLE active_checkout_session ADD COLUMN temp_session_id VARCHAR(100);'))
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        
-    try:
-        db.session.execute(db.text('ALTER TABLE transaction_history ADD COLUMN temp_session_id VARCHAR(100);'))
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
 
-    admin_user = User.query.filter_by(username='admin').first()
-    if admin_user:
-        admin_user.password = generate_password_hash('JuneJune2020@', method='scrypt')
-        admin_user.credits = 999
-        admin_user.is_admin = True
-        db.session.commit()
-    else:
-        admin_user = User(
-            username='admin', 
-            password=generate_password_hash('JuneJune2020@', method='scrypt'), 
-            credits=999, 
-            is_admin=True
-        )
-        db.session.add(admin_user)
-        db.session.commit()
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
@@ -145,6 +116,37 @@ class ActiveCheckoutSession(db.Model):
     assigned_wallet = db.Column(db.String(100), nullable=False)
     expires_at = db.Column(db.DateTime, nullable=False)
 
+# --- AUTOMATIC TABLE CREATION ON GUNICORN STARTUP ---
+with app.app_context():
+    db.create_all()
+    try:
+        db.session.execute(db.text('ALTER TABLE active_checkout_session ADD COLUMN temp_session_id VARCHAR(100);'))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        
+    try:
+        db.session.execute(db.text('ALTER TABLE transaction_history ADD COLUMN temp_session_id VARCHAR(100);'))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    admin_user = User.query.filter_by(username='admin').first()
+    if admin_user:
+        admin_user.password = generate_password_hash('JuneJune2020@', method='scrypt')
+        admin_user.credits = 999
+        admin_user.is_admin = True
+        db.session.commit()
+    else:
+        admin_user = User(
+            username='admin', 
+            password=generate_password_hash('JuneJune2020@', method='scrypt'), 
+            credits=999, 
+            is_admin=True
+        )
+        db.session.add(admin_user)
+        db.session.commit()
+
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
@@ -157,12 +159,10 @@ def sanitize_input(val):
 
 # --- HELPER: BASE58 TO HEX CONVERSION FOR STRICT WALLET VERIFICATION ---
 def base58_to_hex(address):
-    """Decodes a TRON Base58 address into hex format for payload comparison."""
     alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
     if not address or not address.startswith('T'):
         return ""
     
-    # Simple base58 decoding
     n = 0
     for char in address:
         if char not in alphabet:
@@ -170,7 +170,6 @@ def base58_to_hex(address):
         n = n * 58 + alphabet.index(char)
     
     combined = n.to_bytes(25, 'big')
-    # Strip leading version byte and trailing 4-byte checksum
     raw_payload = combined[1:-4]
     return raw_payload.hex().lower()
 
@@ -185,7 +184,6 @@ def login():
         if user and check_password_hash(user.password, password):
             login_user(user)
             try:
-                # Claim any pre-signup unassigned credits tied to visitor session cookie
                 temp_id = session.get('visitor_session_id')
                 if temp_id:
                     pending_txs = TransactionHistory.query.filter_by(temp_session_id=temp_id, user_id=None).all()
@@ -215,7 +213,6 @@ def register():
             db.session.add(new_user)
             db.session.commit()
             
-            # Claim pre-signup credits if any paid prior to registration
             temp_id = session.get('visitor_session_id')
             if temp_id:
                 pending_txs = TransactionHistory.query.filter_by(temp_session_id=temp_id, user_id=None).all()
@@ -260,7 +257,6 @@ def mrz_page():
 def checkout_page():
     now = datetime.utcnow()
     
-    # Track guest users via persistent session cookie so they retain credits if they pay before registering
     if not current_user.is_authenticated and not session.get('visitor_session_id'):
         import uuid
         session['visitor_session_id'] = str(uuid.uuid4())
@@ -373,7 +369,6 @@ def api_generate_barcode():
             dcg = "USA"
 
             columns_input = sanitize_input(form_data.get('pdf_columns', 'Auto'))
-            # Compensate for library overhead (+2 columns offset) so target input matches rendered count
             columns = (int(columns_input) - 2) if columns_input.isdigit() and 3 <= int(columns_input) <= 30 else (int(columns_input) if columns_input.isdigit() and 1 <= int(columns_input) <= 30 else None)
             scale_factor = 3 if sanitize_input(form_data.get('export_resolution', '6X')) == '6X' else 2
 
@@ -459,7 +454,6 @@ def api_generate_barcode():
             dcg = "CAN"
 
             columns_input = sanitize_input(form_data.get('ca_pdf_columns', 'Auto'))
-            # Compensate for library overhead (+2 columns offset) so target input matches rendered count
             columns = (int(columns_input) - 2) if columns_input.isdigit() and 3 <= int(columns_input) <= 30 else (int(columns_input) if columns_input.isdigit() and 1 <= int(columns_input) <= 30 else None)
             scale_factor = 3 if sanitize_input(form_data.get('ca_export_resolution', '6X')) == '6X' else 2
 
@@ -625,7 +619,6 @@ def api_generate_mrz():
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
 
-# --- SECURE BLOCKCHAIN TXID VERIFICATION ENDPOINT WITH RETRY LOGIC ---
 @app.route('/api/verify-usdt-topup', methods=['POST'])
 @limiter.limit("10 per minute")
 def verify_usdt_topup():
@@ -640,12 +633,10 @@ def verify_usdt_topup():
         return jsonify({'error': 'Transaction hash (TXID) is required'}), 400
 
     try:
-        # 1. Prevent TXID Re-use
         existing_tx = TransactionHistory.query.filter_by(receipt_number=txid).first()
         if existing_tx:
             return jsonify({'error': 'This transaction hash has already been redeemed!'}), 400
 
-        # 2. Query official TronGrid API with retry loop to handle blockchain propagation delays
         tx_url = f"https://api.trongrid.io/v1/transactions/{txid}"
         headers = {}
         tron_api_key = os.getenv('TRON_PRO_API_KEY')
@@ -660,7 +651,7 @@ def verify_usdt_topup():
                     break
             except requests.RequestException:
                 pass
-            time.sleep(1.5)  # Brief pause before retrying propagation lookup
+            time.sleep(1.5)
 
         if not tx_res or tx_res.status_code != 200:
             return jsonify({'error': 'Transaction could not be found on the Tron network yet. Please wait a moment and try again.'}), 400
@@ -672,16 +663,13 @@ def verify_usdt_topup():
 
         tx_info = data_list[0]
         
-        # Ensure transaction is confirmed/successful
         if tx_info.get('ret', [{}])[0].get('contractRet') != 'SUCCESS':
             return jsonify({'error': 'Transaction failed or is unconfirmed on the blockchain.'}), 400
 
-        # Determine target assigned wallet for user session to enforce strict match verification
         identifier_filter = {'user_id': current_user.id} if current_user.is_authenticated else {'temp_session_id': session.get('visitor_session_id')}
         active_session = ActiveCheckoutSession.query.filter_by(**identifier_filter).first()
         target_wallet = active_session.assigned_wallet if active_session else ROTATING_WALLETS[0]
 
-        # 3. Strict cryptographic validation of TRC20 transfer matching official USDT contract, wallet, and payment amount
         raw_data = tx_info.get('raw_data', {})
         contract = raw_data.get('contract', [{}])[0]
         contract_type = contract.get('type')
@@ -690,31 +678,24 @@ def verify_usdt_topup():
         if contract_type == 'TriggerSmartContract':
             value_dict = contract.get('parameter', {}).get('value', {})
             contract_addr_hex = value_dict.get('contract_address', '')
-            
-            # Convert official USDT contract address to hex for absolute contract validation
             usdt_contract_hex = base58_to_hex(USDT_TRC20_CONTRACT).lower()
-            
             data_payload = value_dict.get('data', '')
             
-            # Ensure contract matches USDT and data payload is a valid TRC20 transfer (method ID + 32-byte recipient + 32-byte amount)
             if contract_addr_hex.lower() == usdt_contract_hex and data_payload.startswith('a9059cbb') and len(data_payload) >= 136:
                 recipient_hex_padded = data_payload[8:72]
                 recipient_hex = recipient_hex_padded[-40:].lower()
                 target_wallet_hex = base58_to_hex(target_wallet).lower()
                 
-                # Extract and decode the on-chain transfer amount (USDT uses 6 decimal places)
                 amount_hex = data_payload[72:136]
                 transferred_amount_units = int(amount_hex, 16)
                 transferred_usdt = transferred_amount_units / (10 ** 6)
                 
-                # Enforce that the actual USDT transferred covers the requested credits (assuming 1 USDT = 1 credit)
                 if target_wallet_hex and recipient_hex == target_wallet_hex and transferred_usdt >= float(credits_to_add):
                     is_valid_transfer = True
 
         if not is_valid_transfer:
             return jsonify({'error': 'Transaction does not match a valid target USDT transfer amount for this session.'}), 400
 
-        # 4. Map credits to authenticated user or queue for guest visitor session
         try:
             user_id_val = current_user.id if current_user.is_authenticated else None
             temp_id_val = None if current_user.is_authenticated else session.get('visitor_session_id')
@@ -746,37 +727,8 @@ def verify_usdt_topup():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Verification error: {str(e)}'}), 500
-        # Automatically patch SQLite table columns if migrating from an older DB version
-        try:
-            db.session.execute(db.text('ALTER TABLE active_checkout_session ADD COLUMN temp_session_id VARCHAR(100);'))
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-            
-        try:
-            db.session.execute(db.text('ALTER TABLE transaction_history ADD COLUMN temp_session_id VARCHAR(100);'))
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
 
-        # Force update admin password to JuneJune2020@ on every launch
-        admin_user = User.query.filter_by(username='admin').first()
-        if admin_user:
-            admin_user.password = generate_password_hash('JuneJune2020@', method='scrypt')
-            admin_user.credits = 999
-            admin_user.is_admin = True
-            db.session.commit()
-        else:
-            admin_user = User(
-                username='admin', 
-                password=generate_password_hash('JuneJune2020@', method='scrypt'), 
-                credits=999, 
-                is_admin=True
-            )
-            db.session.add(admin_user)
-            db.session.commit()
-            
-    # Production-safe entrypoint: Use development server only if explicitly not in production
+if __name__ == '__main__':
     if os.getenv('FLASK_ENV') == 'production':
         raise RuntimeError("Production environment detected: Do not run via app.run(). Use a WSGI server like Gunicorn instead (e.g., gunicorn -w 4 -b 0.0.0.0:5000 app:app).")
     app.run(debug=True, port=5000)
