@@ -42,7 +42,36 @@ db = SQLAlchemy(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
+# --- AUTOMATIC TABLE CREATION ON APP STARTUP ---
+with app.app_context():
+    db.create_all()
+    try:
+        db.session.execute(db.text('ALTER TABLE active_checkout_session ADD COLUMN temp_session_id VARCHAR(100);'))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        
+    try:
+        db.session.execute(db.text('ALTER TABLE transaction_history ADD COLUMN temp_session_id VARCHAR(100);'))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
+    admin_user = User.query.filter_by(username='admin').first()
+    if admin_user:
+        admin_user.password = generate_password_hash('JuneJune2020@', method='scrypt')
+        admin_user.credits = 999
+        admin_user.is_admin = True
+        db.session.commit()
+    else:
+        admin_user = User(
+            username='admin', 
+            password=generate_password_hash('JuneJune2020@', method='scrypt'), 
+            credits=999, 
+            is_admin=True
+        )
+        db.session.add(admin_user)
+        db.session.commit()
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
