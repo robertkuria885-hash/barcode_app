@@ -257,15 +257,16 @@ def mrz_page():
 def checkout_page():
     now = datetime.utcnow()
     
-    if not current_user.is_authenticated and not session.get('visitor_session_id'):
-        import uuid
-        session['visitor_session_id'] = str(uuid.uuid4())
+    if not current_user.is_authenticated:
+        if 'visitor_session_id' not in session or not session['visitor_session_id']:
+            import uuid
+            session['visitor_session_id'] = str(uuid.uuid4())
     
     identifier_filter = {'user_id': current_user.id} if current_user.is_authenticated else {'temp_session_id': session.get('visitor_session_id')}
     session_record = ActiveCheckoutSession.query.filter_by(**identifier_filter).first()
     
     if not session_record or session_record.expires_at < now:
-        seed_val = current_user.id if current_user.is_authenticated else hash(session.get('visitor_session_id'))
+        seed_val = current_user.id if current_user.is_authenticated else hash(str(session.get('visitor_session_id', 'default')))
         index = (abs(seed_val) + int(now.timestamp())) % len(ROTATING_WALLETS)
         assigned_wallet = ROTATING_WALLETS[index]
         expiry_time = now + timedelta(minutes=15)
