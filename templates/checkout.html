@@ -133,7 +133,7 @@
     document.getElementById('usdtForm').addEventListener('submit', function(e) {
         e.preventDefault();
         const txid = document.getElementById('txidInput').value.trim();
-        const credits = document.getElementById('creditPackage').value;
+        const creditsVal = document.getElementById('creditPackage').value;
         const btn = document.getElementById('payBtn');
         const alertBox = document.getElementById('alertBox');
 
@@ -146,7 +146,7 @@
         fetch('/api/verify-usdt-topup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ txid: txid, credits: credits })
+            body: JSON.stringify({ txid: txid, credits: parseInt(creditsVal, 10) })
         })
         .then(res => res.json())
         .then(data => {
