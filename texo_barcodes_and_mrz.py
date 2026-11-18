@@ -30,9 +30,16 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-super-secret-key-here')
 if app.config['SECRET_KEY'] == 'your-super-secret-key-here' and os.getenv('FLASK_ENV') == 'production':
     raise RuntimeError("CRITICAL SECURITY ERROR: Default SECRET_KEY detected in production environment!")
 
-# Use absolute path for SQLite to prevent file loss depending on working directory execution context
+# Use PostgreSQL in production if DATABASE_URL is set, otherwise fallback to local SQLite
 basedir = os.path.abspath(os.path.dirname(__file__))
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(basedir, "texo_app.db")}?timeout=20'
+raw_db_url = os.getenv('DATABASE_URL', '').strip()
+if raw_db_url:
+    if raw_db_url.startswith("postgres://"):
+        raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = raw_db_url
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {"pool_pre_ping": True}
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(basedir, "texo_app.db")}?timeout=20'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # PRODUCTION SECURITY: Auto-enable secure cookies if environment is production or using HTTPS
@@ -108,7 +115,7 @@ CANADA_PROVINCE_IINS = {
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
-    password = db.Column(db.String(150), nullable=False)
+    password = db.Column(db.String(255), nullable=False)
     credits = db.Column(db.Integer, default=0)
     is_admin = db.Column(db.Boolean, default=False)
 
@@ -167,6 +174,11 @@ def sanitize_input(val):
     if not val:
         return ""
     return re.sub(r'[^a-zA-Z0-9\s\-\<\./]', '', str(val))
+
+def sanitize_username(val):
+    if not val:
+        return ""
+    return re.sub(r'[^a-zA-Z0-9\._\-@]', '', str(val).strip()).lower()
 
 # --- HELPER: BASE58 TO HEX CONVERSION FOR STRICT WALLET VERIFICATION ---
 def base58_to_hex(address):
@@ -335,12 +347,15 @@ def finalize_paystack_credit_grant(reference):
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit("10 per minute")
 def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('barcode_page'))
+
     if request.method == 'POST':
-        username = sanitize_input(request.form.get('username'))
-        password = request.form.get('password')
+        username = sanitize_username(request.form.get('username'))
+        password = request.form.get('password', '')
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password, password):
-            login_user(user)
+            login_user(user, remember=True)
             try:
                 temp_id = session.get('visitor_session_id')
                 if temp_id:
@@ -351,6 +366,9 @@ def login():
                     db.session.commit()
             except Exception:
                 db.session.rollback()
+            next_page = request.args.get('next')
+            if next_page and next_page.startswith('/'):
+                return redirect(next_page)
             return redirect(url_for('barcode_page'))
         flash('Invalid username or password', 'danger')
     return render_template('login.html')
@@ -358,9 +376,12 @@ def login():
 @app.route('/register', methods=['GET', 'POST'])
 @limiter.limit("5 per minute")
 def register():
+    if current_user.is_authenticated:
+        return redirect(url_for('barcode_page'))
+
     if request.method == 'POST':
-        username = sanitize_input(request.form.get('username'))
-        password = request.form.get('password')
+        username = sanitize_username(request.form.get('username'))
+        password = request.form.get('password', '')
         if User.query.filter_by(username=username).first():
             flash('Username already exists', 'danger')
             return redirect(url_for('register'))
@@ -379,7 +400,7 @@ def register():
                     new_user.credits += int(tx.amount)
                 db.session.commit()
             
-            login_user(new_user)
+            login_user(new_user, remember=True)
         except Exception:
             db.session.rollback()
             flash('Registration error occurred. Please try again.', 'danger')
