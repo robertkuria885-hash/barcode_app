@@ -916,15 +916,15 @@ def api_paystack_stk_push():
     user_id_val = current_user.id if current_user.is_authenticated else None
     temp_id_val = None if current_user.is_authenticated else session.get('visitor_session_id')
 
-    # Paystack requires a valid email address on /charge
+    # Paystack requires a valid email address with a real TLD on /charge
     raw_email = str(data.get('email', '')).strip()
-    if re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', raw_email):
+    if re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', raw_email) and not raw_email.lower().endswith('.local'):
         customer_email = raw_email
-    elif current_user.is_authenticated and '@' in current_user.username and '.' in current_user.username:
+    elif current_user.is_authenticated and '@' in current_user.username and '.' in current_user.username and not current_user.username.lower().endswith('.local'):
         customer_email = current_user.username
     else:
         slug = f"user{user_id_val}" if user_id_val else f"guest{str(temp_id_val)[:8]}"
-        customer_email = f"{slug}@payments.texo.local"
+        customer_email = f"{slug}@texoapp.com"
 
     kes_amount = round(credits_to_add * KES_PER_CREDIT, 2)
     if kes_amount > 150000:
