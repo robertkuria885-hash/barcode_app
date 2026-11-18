@@ -11,3 +11,4 @@ pdf417>=0.7.0
 qrcode==8.0
 Pillow
 gunicorn
+psycopg2-binary
