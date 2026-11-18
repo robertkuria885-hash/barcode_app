@@ -13,6 +13,8 @@
         .wallet-box { background-color: #000; border: 1px dashed #ffc107; word-break: break-all; font-family: monospace; }
         .qr-img { width: 180px; height: 180px; background: #fff; padding: 10px; border-radius: 6px; }
         .help-section { background-color: #1e2227; border-left: 4px solid #ffc107; font-size: 0.85rem; }
+        .mpesa-card { background-color: #15191c; border: 1px solid #198754; border-radius: 8px; padding: 20px; }
+        .mpesa-card .form-control:focus, .mpesa-card .form-select:focus { border-color: #198754; }
     </style>
 </head>
 <body>
@@ -22,13 +24,54 @@
             <a class="nav-link text-white px-3" href="/mrz">🛂 PASSPORTS & MRZ</a>
         </div>
         <div class="navbar-nav ms-auto">
-            <a class="nav-link text-warning fw-bold" href="/checkout">Credits: <span id="creditDisplay">{{ current_user.credits }}</span></a>
+            <a class="nav-link text-warning fw-bold" href="/checkout">Credits: <span id="creditDisplay">{{ current_user.credits if current_user.is_authenticated else 0 }}</span></a>
             <a class="nav-link text-danger" href="/logout">Logout</a>
         </div>
     </nav>
 
     <div class="container pb-5">
         <div class="card card-custom shadow-lg">
+            <!-- M-PESA STK PUSH OPTION (PAYSTACK) -->
+            <div class="mpesa-card mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <h4 class="mb-0 text-success fw-bold">📱 Instant Top Up via M-Pesa</h4>
+                    <span class="badge bg-success">STK Push</span>
+                </div>
+                <p class="text-muted small mb-3">Rate: <strong class="text-white">KES {{ kes_per_credit|int }} = 1 Credit</strong> • Instant Prompt to Your Phone</p>
+
+                <div id="mpesaAlertBox"></div>
+
+                <form id="mpesaForm" autocomplete="off">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold small" for="mpesaCreditPackage">Select Credit Package:</label>
+                        <select class="form-select" id="mpesaCreditPackage" onchange="updateMpesaCost()">
+                            <option value="1">1 Credit (KES {{ (1 * kes_per_credit)|int }})</option>
+                            <option value="5">5 Credits (KES {{ (5 * kes_per_credit)|int }})</option>
+                            <option value="10">10 Credits (KES {{ (10 * kes_per_credit)|int }})</option>
+                            <option value="25">25 Credits (KES {{ (25 * kes_per_credit)|int }})</option>
+                            <option value="50">50 Credits (KES {{ (50 * kes_per_credit)|int }})</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold small" for="mpesaPayableAmount">Total Amount (KES):</label>
+                        <input type="text" class="form-control fw-bold text-success bg-black" id="mpesaPayableAmount" value="KES {{ (1 * kes_per_credit)|int }}" readonly>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold small" for="mpesaPhoneInput">M-Pesa Phone Number (Safaricom):</label>
+                        <input type="tel" class="form-control" id="mpesaPhoneInput" placeholder="e.g. 0712345678 or +254712345678" maxlength="16" required>
+                    </div>
+
+                    <button type="submit" class="btn btn-success w-100 fw-bold py-2" id="mpesaPayBtn">
+                        SEND M-PESA STK PROMPT
+                    </button>
+                </form>
+            </div>
+
+            <div class="text-center text-muted small fw-bold my-2">— OR PAY WITH CRYPTO (USDT TRC20) —</div>
+            <hr class="border-secondary mt-2 mb-4">
+
             <h3 class="text-center mb-1 text-warning fw-bold">Top Up Credits (USDT)</h3>
             <p class="text-center text-muted small mb-3">Rate: <strong>$1 USDT = 1 Credit</strong></p>
             
@@ -83,12 +126,12 @@
             <!-- Help Section for Beginners -->
             <div class="help-section p-3 rounded text-light">
                 <h6 class="text-warning fw-bold mb-2">💡 Need help funding crypto or sending money? (Beginner Guide)</h6>
-                <p class="mb-2">Don't know how to send crypto? You can easily use a non-KYC mobile wallet like **Trust Wallet**:</p>
+                <p class="mb-2">Don't know how to send crypto? You can easily use a non-KYC mobile wallet like <strong>Trust Wallet</strong>:</p>
                 <ol class="ps-3 mb-2">
                     <li>Download <strong>Trust Wallet</strong> from your app store (No ID/KYC required).</li>
-                    <li>Buy or deposit **USDT** inside your wallet, ensuring you select the **Tron (TRC-20)** network. Make sure you also hold a small amount of **TRX** ($0.50 worth) in your wallet to cover network gas fees.</li>
+                    <li>Buy or deposit <strong>USDT</strong> inside your wallet, ensuring you select the <strong>Tron (TRC-20)</strong> network. Make sure you also hold a small amount of <strong>TRX</strong> ($0.50 worth) in your wallet to cover network gas fees.</li>
                     <li>Tap <strong>Send</strong>, paste the address shown above, enter your USDT amount, and confirm the transaction.</li>
-                    <li>Once sent, copy your transaction hash (**TXID**) from the transaction details and paste it into the box above to instantly get your credits!</li>
+                    <li>Once sent, copy your transaction hash (<strong>TXID</strong>) from the transaction details and paste it into the box above to instantly get your credits!</li>
                 </ol>
             </div>
 
@@ -100,6 +143,101 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+    const KES_PER_CREDIT = {{ kes_per_credit|float }};
+    let activeMpesaPoll = null;
+
+    function showSafeAlert(containerId, type, message) {
+        const container = document.getElementById(containerId);
+        container.innerHTML = '';
+        const div = document.createElement('div');
+        div.className = `alert alert-${type} py-2 small`;
+        div.textContent = message;
+        container.appendChild(div);
+    }
+
+    function updateMpesaCost() {
+        const selectedCredits = parseInt(document.getElementById('mpesaCreditPackage').value, 10) || 1;
+        const totalKes = Math.round(selectedCredits * KES_PER_CREDIT);
+        document.getElementById('mpesaPayableAmount').value = `KES ${totalKes.toLocaleString()}`;
+    }
+
+    document.getElementById('mpesaForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const phoneRaw = document.getElementById('mpesaPhoneInput').value.trim();
+        const credits = parseInt(document.getElementById('mpesaCreditPackage').value, 10) || 1;
+        const btn = document.getElementById('mpesaPayBtn');
+
+        const cleanedPhone = phoneRaw.replace(/[\s\-\(\)]/g, '');
+        if (!/^(?:\+?254|0)?(?:7|1)\d{8}$/.test(cleanedPhone)) {
+            showSafeAlert('mpesaAlertBox', 'danger', 'Please enter a valid Kenyan M-Pesa phone number (e.g., 0712345678).');
+            return;
+        }
+
+        if (activeMpesaPoll) {
+            clearInterval(activeMpesaPoll);
+            activeMpesaPoll = null;
+        }
+
+        btn.disabled = true;
+        btn.innerText = 'SENDING STK PUSH...';
+        showSafeAlert('mpesaAlertBox', 'info', 'Initiating M-Pesa STK Push... Please check your phone.');
+
+        try {
+            const res = await fetch('/api/paystack/stk-push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: cleanedPhone, credits: credits })
+            });
+            const data = await res.json();
+
+            if (!res.ok || !data.success) {
+                btn.disabled = false;
+                btn.innerText = 'SEND M-PESA STK PROMPT';
+                showSafeAlert('mpesaAlertBox', 'danger', data.error || 'Failed to initiate M-Pesa STK Push.');
+                return;
+            }
+
+            btn.innerText = 'WAITING FOR PIN ON PHONE...';
+            showSafeAlert('mpesaAlertBox', 'warning', data.display_text || 'STK Push sent! Enter your M-Pesa PIN on your phone.');
+            startMpesaVerificationPoll(data.reference, btn);
+        } catch (err) {
+            btn.disabled = false;
+            btn.innerText = 'SEND M-PESA STK PROMPT';
+            showSafeAlert('mpesaAlertBox', 'danger', 'Network connection error. Please try again.');
+        }
+    });
+
+    function startMpesaVerificationPoll(reference, btn) {
+        let attempts = 0;
+        activeMpesaPoll = setInterval(async () => {
+            attempts++;
+            try {
+                const res = await fetch(`/api/paystack/status/${encodeURIComponent(reference)}`);
+                const data = await res.json();
+
+                if (data.paid) {
+                    clearInterval(activeMpesaPoll);
+                    activeMpesaPoll = null;
+                    btn.disabled = false;
+                    btn.innerText = 'SEND M-PESA STK PROMPT';
+                    showSafeAlert('mpesaAlertBox', 'success', data.message || 'Payment confirmed! Credits added.');
+                    if (typeof data.new_credits !== 'undefined') {
+                        document.getElementById('creditDisplay').textContent = data.new_credits;
+                    }
+                    setTimeout(() => { window.location.href = '/barcode'; }, 2000);
+                } else if (attempts >= 24) {
+                    clearInterval(activeMpesaPoll);
+                    activeMpesaPoll = null;
+                    btn.disabled = false;
+                    btn.innerText = 'SEND M-PESA STK PROMPT';
+                    showSafeAlert('mpesaAlertBox', 'warning', 'Confirmation timed out. If you entered your PIN, refresh this page in a few seconds to see your updated credits.');
+                }
+            } catch (e) {
+                // Keep polling silently on transient network blips
+            }
+        }, 5000);
+    }
+
     function copyWallet() {
         const walletText = document.getElementById('walletAddr').innerText;
         navigator.clipboard.writeText(walletText).then(() => {
@@ -133,7 +271,7 @@
     document.getElementById('usdtForm').addEventListener('submit', function(e) {
         e.preventDefault();
         const txid = document.getElementById('txidInput').value.trim();
-        const creditsVal = document.getElementById('creditPackage').value;
+        const credits = document.getElementById('creditPackage').value;
         const btn = document.getElementById('payBtn');
         const alertBox = document.getElementById('alertBox');
 
@@ -146,7 +284,7 @@
         fetch('/api/verify-usdt-topup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ txid: txid, credits: parseInt(creditsVal, 10) })
+            body: JSON.stringify({ txid: txid, credits: credits })
         })
         .then(res => res.json())
         .then(data => {
