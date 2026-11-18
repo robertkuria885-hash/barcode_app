@@ -487,14 +487,50 @@ def checkout_page():
         kes_per_credit=KES_PER_CREDIT
     )
 
-@app.route('/admin')
+@app.route('/admin', methods=['GET', 'POST'])
 @login_required
 def admin_dashboard():
     if not current_user.is_admin:
         flash('Access unauthorized.', 'danger')
         return redirect(url_for('barcode_page'))
-    users = User.query.all()
-    return render_template('admin.html', users=users)
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+        target_user_id = request.form.get('user_id', type=int)
+        target_user = db.session.get(User, target_user_id) if target_user_id else None
+
+        if not target_user:
+            flash('User not found.', 'danger')
+            return redirect(url_for('admin_dashboard'))
+
+        if action == 'update_credits':
+            new_credits = request.form.get('credits', type=int)
+            if new_credits is not None and new_credits >= 0:
+                target_user.credits = new_credits
+                db.session.commit()
+                flash(f'Updated credits for {target_user.username} to {new_credits}.', 'success')
+
+        elif action == 'reset_password':
+            new_pwd = request.form.get('new_password', '').strip()
+            if len(new_pwd) < 6:
+                flash('New password must be at least 6 characters.', 'danger')
+            else:
+                target_user.password = generate_password_hash(new_pwd, method='scrypt')
+                db.session.commit()
+                flash(f'Password reset successfully for {target_user.username}.', 'success')
+
+        return redirect(url_for('admin_dashboard'))
+
+    users = User.query.order_by(User.id.desc()).all()
+    user_map = {u.id: u.username for u in users}
+    transactions = TransactionHistory.query.order_by(TransactionHistory.timestamp.desc()).all()
+
+    return render_template(
+        'admin.html',
+        users=users,
+        transactions=transactions,
+        user_map=user_map
+    )
 
 # --- SECURE API ENDPOINTS ---
 @app.route('/api/generate-barcode', methods=['POST'])
