@@ -2,6 +2,9 @@ import os
 import io
 import base64
 import re
+import hmac
+import hashlib
+import uuid
 import requests
 import time
 from datetime import datetime, timedelta
@@ -51,9 +54,11 @@ limiter = Limiter(
 
 Talisman(app, content_security_policy={
     'default-src': ["'self'", "https://cdn.jsdelivr.net"],
-    'script-src': ["'self'", "https://cdn.jsdelivr.net", "'unsafe-inline'"],
+    'script-src': ["'self'", "https://cdn.jsdelivr.net", "https://js.paystack.co", "'unsafe-inline'"],
     'style-src': ["'self'", "https://cdn.jsdelivr.net", "'unsafe-inline'"],
-    'img-src': ["'self'", "data:"]
+    'img-src': ["'self'", "data:"],
+    'connect-src': ["'self'", "https://api.paystack.co"],
+    'frame-src': ["'self'", "https://checkout.paystack.com"]
 })
 
 # --- EXACT TRUST WALLET TRON ADDRESSES ---
@@ -66,6 +71,12 @@ ROTATING_WALLETS = [WALLET_1, WALLET_2, WALLET_3]
 
 # USDT TRC20 Contract Address on Tron Mainnet
 USDT_TRC20_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+
+# --- PAYSTACK LIVE CONFIGURATION ---
+PAYSTACK_PUBLIC_KEY = os.getenv('PAYSTACK_PUBLIC_KEY', 'pk_live_53edf3c8260d346d8551d0a307f59d485ab1f961')
+PAYSTACK_SECRET_KEY = os.getenv('PAYSTACK_SECRET_KEY', '').strip()
+PAYSTACK_WEBHOOK_SECRET = os.getenv('PAYSTACK_WEBHOOK_SECRET', '').strip()
+KES_PER_CREDIT = float(os.getenv('KES_PER_CREDIT', '130'))
 
 STATE_IINS = {
     'AL': '636033', 'AK': '636059', 'AZ': '636026', 'AR': '636021',
@@ -87,7 +98,7 @@ STATE_IINS = {
 
 CANADA_PROVINCE_IINS = {
     'Ontario': '636012', 'Quebec': '604428', 'British Columbia': '636028',
-    'Alberta': '604432', 'Manitoba': '636048', 'Saskatchewan': '636044',
+    'Alberta': '604432', 'Manitoba': '604434', 'Saskatchewan': '636044',
     'Nova Scotia': '636013', 'New Brunswick': '636017', 'Newfoundland and Labrador': '636016',
     'Prince Edward Island': '604426', 'Northwest Territories': '604434',
     'Nunavut': '604433', 'Yukon': '604429'
@@ -172,6 +183,153 @@ def base58_to_hex(address):
     combined = n.to_bytes(25, 'big')
     raw_payload = combined[1:-4]
     return raw_payload.hex().lower()
+
+# --- PAYSTACK SECURITY & M-PESA HELPERS ---
+def normalize_kenyan_phone(raw_phone):
+    if not raw_phone:
+        return None
+    cleaned = re.sub(r'[\s\-\(\)]', '', str(raw_phone).strip())
+    if cleaned.startswith('+254'):
+        normalized = cleaned
+    elif cleaned.startswith('254'):
+        normalized = '+' + cleaned
+    elif cleaned.startswith('0') and len(cleaned) == 10:
+        normalized = '+254' + cleaned[1:]
+    elif (cleaned.startswith('7') or cleaned.startswith('1')) and len(cleaned) == 9:
+        normalized = '+254' + cleaned
+    else:
+        return None
+
+    if re.match(r'^\+254(7|1)\d{8}$', normalized):
+        return normalized
+    return None
+
+def verify_paystack_webhook_signature(raw_body, headers):
+    # 1. Verify newer timestamped Paystack-Signature header if PAYSTACK_WEBHOOK_SECRET is configured
+    sig_header = headers.get('Paystack-Signature', '')
+    if sig_header and PAYSTACK_WEBHOOK_SECRET:
+        try:
+            timestamp = None
+            v1_signatures = []
+            for part in sig_header.split(','):
+                if '=' not in part:
+                    continue
+                k, v = part.split('=', 1)
+                k = k.strip()
+                v = v.strip()
+                if k == 't' and v.isdigit():
+                    timestamp = int(v)
+                elif k == 'v1' and ':' in v:
+                    _, hex_sig = v.split(':', 1)
+                    v1_signatures.append(hex_sig.lower())
+
+            if timestamp is not None and abs(int(time.time()) - timestamp) <= 300:
+                signed_payload = f"{timestamp}.".encode('utf-8') + raw_body
+                expected = hmac.new(
+                    PAYSTACK_WEBHOOK_SECRET.encode('utf-8'),
+                    signed_payload,
+                    hashlib.sha512
+                ).hexdigest().lower()
+                for candidate in v1_signatures:
+                    if hmac.compare_digest(expected, candidate):
+                        return True
+        except Exception:
+            pass
+
+    # 2. Verify standard x-paystack-signature (HMAC SHA-512 of raw body using PAYSTACK_SECRET_KEY)
+    legacy_sig = headers.get('x-paystack-signature', '').strip().lower()
+    if legacy_sig and PAYSTACK_SECRET_KEY:
+        expected_legacy = hmac.new(
+            PAYSTACK_SECRET_KEY.encode('utf-8'),
+            raw_body,
+            hashlib.sha512
+        ).hexdigest().lower()
+        if hmac.compare_digest(expected_legacy, legacy_sig):
+            return True
+
+    return False
+
+def finalize_paystack_credit_grant(reference):
+    if not PAYSTACK_SECRET_KEY:
+        return False, "Paystack secret key is not configured on the server."
+
+    if not re.match(r'^PSK-[a-f0-9]{32}$', str(reference)):
+        return False, "Invalid payment reference format."
+
+    # Idempotency check: prevent double-crediting if already processed
+    existing_tx = TransactionHistory.query.filter_by(receipt_number=reference).first()
+    if existing_tx:
+        return True, "Already credited."
+
+    # Server-to-server verification directly with Paystack API
+    try:
+        verify_res = requests.get(
+            f"https://api.paystack.co/transaction/verify/{reference}",
+            headers={"Authorization": f"Bearer {PAYSTACK_SECRET_KEY}"},
+            timeout=12
+        )
+        if verify_res.status_code != 200:
+            return False, "Unable to verify transaction with Paystack."
+
+        payload = verify_res.json()
+        if not payload.get('status'):
+            return False, "Paystack verification returned false status."
+
+        tx_data = payload.get('data') or {}
+        if tx_data.get('status') != 'success':
+            return False, f"Payment status is {tx_data.get('status')}."
+
+        if tx_data.get('currency') != 'KES':
+            return False, "Invalid transaction currency."
+
+        metadata = tx_data.get('metadata') or {}
+        try:
+            credits_to_add = int(metadata.get('credits', 0))
+            expected_subunits = int(metadata.get('expected_amount_subunits', 0))
+        except (ValueError, TypeError):
+            return False, "Corrupted transaction metadata."
+
+        if credits_to_add < 1 or credits_to_add > 1000:
+            return False, "Invalid credit quantity."
+
+        # Enforce server-side price match (never trust client amounts)
+        min_required_subunits = max(expected_subunits, int(round(credits_to_add * KES_PER_CREDIT * 100)))
+        paid_subunits = int(tx_data.get('amount', 0))
+        if paid_subunits < min_required_subunits:
+            return False, "Paid amount is less than required credit cost."
+
+        raw_user_id = metadata.get('user_id')
+        user_id_val = int(raw_user_id) if raw_user_id not in (None, '', 'None') else None
+        temp_id_val = str(metadata.get('temp_session_id')) if metadata.get('temp_session_id') else None
+
+        if user_id_val is None and not temp_id_val:
+            return False, "Missing recipient session metadata."
+
+        # Double-check inside DB commit block (unique constraint on receipt_number protects against race conditions)
+        if TransactionHistory.query.filter_by(receipt_number=reference).first():
+            return True, "Already credited."
+
+        new_tx = TransactionHistory(
+            receipt_number=reference,
+            user_id=user_id_val,
+            temp_session_id=None if user_id_val else temp_id_val,
+            amount=float(credits_to_add)
+        )
+        db.session.add(new_tx)
+
+        if user_id_val is not None:
+            User.query.filter_by(id=user_id_val).update(
+                {"credits": User.credits + credits_to_add},
+                synchronize_session=False
+            )
+
+        db.session.commit()
+        return True, f"Successfully credited {credits_to_add} credit(s)."
+    except Exception as err:
+        db.session.rollback()
+        if TransactionHistory.query.filter_by(receipt_number=reference).first():
+            return True, "Already credited."
+        return False, f"Credit fulfillment error: {str(err)}"
 
 # --- AUTH ROUTES ---
 @app.route('/login', methods=['GET', 'POST'])
@@ -259,7 +417,6 @@ def checkout_page():
     
     if not current_user.is_authenticated:
         if 'visitor_session_id' not in session or not session['visitor_session_id']:
-            import uuid
             session['visitor_session_id'] = str(uuid.uuid4())
     
     identifier_filter = {'user_id': current_user.id} if current_user.is_authenticated else {'temp_session_id': session.get('visitor_session_id')}
@@ -304,7 +461,9 @@ def checkout_page():
         assigned_wallet=assigned_wallet,
         final_master_wallet=FINAL_MASTER_WALLET_4,
         qr_base64=qr_base64,
-        remaining_seconds=remaining_seconds
+        remaining_seconds=remaining_seconds,
+        paystack_public_key=PAYSTACK_PUBLIC_KEY,
+        kes_per_credit=KES_PER_CREDIT
     )
 
 @app.route('/admin')
@@ -323,7 +482,7 @@ def admin_dashboard():
 def api_generate_barcode():
     db_user = db.session.get(User, current_user.id)
     if not db_user.is_admin and db_user.credits < 1:
-        return jsonify({'error': 'Insufficient credits! Please top up via USDT.'}), 403
+        return jsonify({'error': 'Insufficient credits! Please top up via USDT or M-Pesa.'}), 403
     try:
         form_data = request.form
         tab_type = sanitize_input(form_data.get('active_tab', 'us'))
@@ -510,7 +669,7 @@ def api_generate_barcode():
                 db.session.commit()
                 if rows_updated == 0:
                     db.session.rollback()
-                    return jsonify({'error': 'Insufficient credits! Please top up via USDT.'}), 403
+                    return jsonify({'error': 'Insufficient credits! Please top up via USDT or M-Pesa.'}), 403
                 db.session.refresh(db_user)
             except Exception as db_err:
                 db.session.rollback()
@@ -547,7 +706,7 @@ def calculate_check_digit(data_str):
 def api_generate_mrz():
     db_user = db.session.get(User, current_user.id)
     if not db_user.is_admin and db_user.credits < 1:
-        return jsonify({'error': 'Insufficient credits! Please top up via USDT.'}), 403
+        return jsonify({'error': 'Insufficient credits! Please top up via USDT or M-Pesa.'}), 403
     try:
         form_data = request.form
         doc_type = sanitize_input(form_data.get('document_type', 'P'))
@@ -605,7 +764,7 @@ def api_generate_mrz():
                 db.session.commit()
                 if rows_updated == 0:
                     db.session.rollback()
-                    return jsonify({'error': 'Insufficient credits! Please top up via USDT.'}), 403
+                    return jsonify({'error': 'Insufficient credits! Please top up via USDT or M-Pesa.'}), 403
                 db.session.refresh(db_user)
             except Exception as db_err:
                 db.session.rollback()
@@ -728,6 +887,152 @@ def verify_usdt_topup():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Verification error: {str(e)}'}), 500
+
+# --- PAYSTACK M-PESA STK PUSH ENDPOINTS ---
+@app.route('/api/paystack/stk-push', methods=['POST'])
+@limiter.limit("5 per minute")
+def api_paystack_stk_push():
+    if not PAYSTACK_SECRET_KEY:
+        return jsonify({'error': 'M-Pesa payment gateway is not configured on the server yet.'}), 503
+
+    data = request.get_json() or {}
+    phone_normalized = normalize_kenyan_phone(data.get('phone'))
+    if not phone_normalized:
+        return jsonify({'error': 'Please enter a valid Kenyan M-Pesa number (e.g., 0712345678 or +254712345678).'}), 400
+
+    try:
+        credits_to_add = int(data.get('credits', 1))
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Invalid credit amount.'}), 400
+
+    if credits_to_add < 1 or credits_to_add > 1000:
+        return jsonify({'error': 'Credits must be between 1 and 1000.'}), 400
+
+    # Ensure guest visitors also have a session ID so pre-signup top-ups link automatically
+    if not current_user.is_authenticated:
+        if 'visitor_session_id' not in session or not session['visitor_session_id']:
+            session['visitor_session_id'] = str(uuid.uuid4())
+
+    user_id_val = current_user.id if current_user.is_authenticated else None
+    temp_id_val = None if current_user.is_authenticated else session.get('visitor_session_id')
+
+    # Paystack requires a valid email address on /charge
+    raw_email = str(data.get('email', '')).strip()
+    if re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', raw_email):
+        customer_email = raw_email
+    elif current_user.is_authenticated and '@' in current_user.username and '.' in current_user.username:
+        customer_email = current_user.username
+    else:
+        slug = f"user{user_id_val}" if user_id_val else f"guest{str(temp_id_val)[:8]}"
+        customer_email = f"{slug}@payments.texo.local"
+
+    kes_amount = round(credits_to_add * KES_PER_CREDIT, 2)
+    if kes_amount > 150000:
+        return jsonify({'error': 'Amount exceeds M-Pesa single transaction limit of KES 150,000.'}), 400
+
+    amount_subunits = int(round(kes_amount * 100))
+    reference = f"PSK-{uuid.uuid4().hex}"
+
+    payload = {
+        "email": customer_email,
+        "amount": amount_subunits,
+        "currency": "KES",
+        "reference": reference,
+        "mobile_money": {
+            "phone": phone_normalized,
+            "provider": "mpesa"
+        },
+        "metadata": {
+            "user_id": user_id_val,
+            "temp_session_id": temp_id_val,
+            "credits": credits_to_add,
+            "expected_amount_subunits": amount_subunits,
+            "phone": phone_normalized
+        }
+    }
+
+    try:
+        ps_res = requests.post(
+            "https://api.paystack.co/charge",
+            headers={
+                "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
+                "Content-Type": "application/json"
+            },
+            json=payload,
+            timeout=15
+        )
+        ps_json = ps_res.json()
+
+        if ps_res.status_code not in (200, 201) or not ps_json.get('status'):
+            err_msg = ps_json.get('message', 'Failed to send M-Pesa STK push prompt.')
+            return jsonify({'error': err_msg}), 400
+
+        charge_data = ps_json.get('data') or {}
+        return jsonify({
+            'success': True,
+            'reference': reference,
+            'status': charge_data.get('status', 'pay_offline'),
+            'display_text': charge_data.get('display_text', 'STK Push sent! Enter your M-Pesa PIN on your phone to complete payment.'),
+            'kes_amount': kes_amount,
+            'credits': credits_to_add
+        })
+    except requests.RequestException:
+        return jsonify({'error': 'Network error connecting to Paystack. Please try again.'}), 502
+
+@app.route('/api/paystack/status/<reference>', methods=['GET'])
+@limiter.limit("30 per minute")
+def api_paystack_status(reference):
+    if not re.match(r'^PSK-[a-f0-9]{32}$', str(reference)):
+        return jsonify({'error': 'Invalid reference.'}), 400
+
+    # If webhook already processed it, return immediate success
+    existing_tx = TransactionHistory.query.filter_by(receipt_number=reference).first()
+    if existing_tx:
+        new_credits = current_user.credits if current_user.is_authenticated else int(existing_tx.amount)
+        return jsonify({
+            'paid': True,
+            'status': 'success',
+            'message': f'Payment confirmed! {int(existing_tx.amount)} credit(s) added.',
+            'new_credits': new_credits
+        })
+
+    # Fallback server-to-server check in case webhook is delayed
+    credited, msg = finalize_paystack_credit_grant(reference)
+    if credited:
+        tx_now = TransactionHistory.query.filter_by(receipt_number=reference).first()
+        new_credits = current_user.credits if current_user.is_authenticated else (int(tx_now.amount) if tx_now else 0)
+        return jsonify({
+            'paid': True,
+            'status': 'success',
+            'message': msg,
+            'new_credits': new_credits
+        })
+
+    return jsonify({
+        'paid': False,
+        'status': 'pending',
+        'message': 'Waiting for M-Pesa PIN confirmation...'
+    })
+
+@app.route('/api/paystack/webhook', methods=['POST'])
+@limiter.exempt
+def api_paystack_webhook():
+    raw_body = request.get_data()
+    if not verify_paystack_webhook_signature(raw_body, request.headers):
+        return jsonify({'error': 'Invalid webhook signature'}), 401
+
+    try:
+        event = request.get_json(silent=True) or {}
+    except Exception:
+        return jsonify({'error': 'Malformed JSON'}), 400
+
+    if event.get('event') == 'charge.success':
+        data = event.get('data') or {}
+        reference = data.get('reference', '')
+        if str(reference).startswith('PSK-'):
+            finalize_paystack_credit_grant(reference)
+
+    return jsonify({'status': 'ok'}), 200
 
 if __name__ == '__main__':
     if os.getenv('FLASK_ENV') == 'production':
