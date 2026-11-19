@@ -144,23 +144,6 @@
                                         </select>
                                     </div>
 
-                                    <div class="mb-2">
-                                        <label class="form-label">Hair Colour (DAZ) (Optional)</label>
-                                        <select class="form-select" name="hair">
-                                            <option value="">-- None / Omit --</option>
-                                            <option value="BAL">BAL - Bald</option>
-                                            <option value="BLK">BLK - Black</option>
-                                            <option value="BLN" selected>BLN - Blonde</option>
-                                            <option value="BRO">BRO - Brown</option>
-                                            <option value="GRY">GRY - Gray</option>
-                                            <option value="BRO">BRO - Brown</option>
-                                            <option value="RED">RED - Red / Auburn</option>
-                                            <option value="SDY">SDY - Sandy</option>
-                                            <option value="WHI">WHI - White</option>
-                                            <option value="UNK">UNK - Unknown</option>
-                                        </select>
-                                    </div>
-
                                     <div class="mb-2"><label class="form-label">Street Address (DAG)</label><input type="text" class="form-control" name="address" value="589 MARSEILLES CIR"></div>
                                     <div class="mb-2"><label class="form-label">City (DAI)</label><input type="text" class="form-control" name="city" value="BUFFALO GROVE"></div>
                                     <div class="mb-2"><label class="form-label">State Code (DAJ)</label><input type="text" class="form-control" name="state_code" value="IL"></div>
@@ -169,6 +152,24 @@
                                     <div class="mb-2"><label class="form-label">Country Marker (DCG)</label><input type="text" class="form-control" name="dcg" value="USA"></div>
                                     <div class="mb-2"><label class="form-label">Restrictions (DCB)</label><input type="text" class="form-control" name="restrictions" value="NONE"></div>
                                     <div class="mb-2"><label class="form-label">Endorsements (DCD)</label><input type="text" class="form-control" name="endorsements" value="NONE"></div>
+
+                                    <div class="mb-2">
+                                        <label class="form-label">Donor (DDK)</label>
+                                        <select class="form-select" name="ddk">
+                                            <option value="" selected>-- Select Donor --</option>
+                                            <option value="YES">YES</option>
+                                            <option value="NO">NO</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="mb-2">
+                                        <label class="form-label">Fully Compliant (DDA)</label>
+                                        <select class="form-select" name="dda">
+                                            <option value="" selected>-- Select Fully Compliant --</option>
+                                            <option value="YES">YES</option>
+                                            <option value="NO">NO</option>
+                                        </select>
+                                    </div>
                                     
                                     <!-- DYNAMIC BARCODE OPTIONS -->
                                     <div class="mb-2">
@@ -192,6 +193,25 @@
                                         <select class="form-select" name="export_resolution">
                                             <option value="2X">Standard (2X)</option>
                                             <option value="6X" selected>High Quality (6X)</option>
+                                        </select>
+                                    </div>
+
+                                    <!-- OPTIONAL SECTION -->
+                                    <hr class="border-secondary my-3">
+                                    <div class="text-warning fw-bold small mb-2">OPTIONAL</div>
+                                    <div class="mb-2">
+                                        <label class="form-label">Hair Colour (DAZ)</label>
+                                        <select class="form-select" name="hair">
+                                            <option value="" selected>Choose the type of hair colour you want</option>
+                                            <option value="BAL">BAL - Bald</option>
+                                            <option value="BLK">BLK - Black</option>
+                                            <option value="BLN">BLN - Blonde</option>
+                                            <option value="BRO">BRO - Brown</option>
+                                            <option value="GRY">GRY - Gray</option>
+                                            <option value="RED">RED - Red / Auburn</option>
+                                            <option value="SDY">SDY - Sandy</option>
+                                            <option value="WHI">WHI - White</option>
+                                            <option value="UNK">UNK - Unknown</option>
                                         </select>
                                     </div>
                                 </div>
@@ -251,19 +271,6 @@
                                         </select>
                                     </div>
 
-                                    <div class="mb-2">
-                                        <label class="form-label">Hair Colour (DAZ) (Optional)</label>
-                                        <select class="form-select" name="ca_hair">
-                                            <option value="">-- None / Omit --</option>
-                                            <option value="BAL">BAL - Bald</option>
-                                            <option value="BLK">BLK - Black</option>
-                                            <option value="BLN">BLN - Blonde</option>
-                                            <option value="BRO" selected>BRO - Brown</option>
-                                            <option value="RED">RED - Red</option>
-                                            <option value="WHI">WHI - White</option>
-                                        </select>
-                                    </div>
-
                                     <div class="mb-2"><label class="form-label">Street Address (DAG)</label><input type="text" class="form-control" name="ca_address" value="100 BAY STREET"></div>
                                     <div class="mb-2"><label class="form-label">City (DAI)</label><input type="text" class="form-control" name="ca_city" value="TORONTO"></div>
                                     <div class="mb-2"><label class="form-label">Province Code (DAJ)</label><input type="text" class="form-control" name="ca_state_code" value="ON"></div>
@@ -272,6 +279,15 @@
                                     <div class="mb-2"><label class="form-label">Country Marker (DCG)</label><input type="text" class="form-control" name="ca_dcg" value="CAN"></div>
                                     <div class="mb-2"><label class="form-label">Restrictions (DCB)</label><input type="text" class="form-control" name="ca_restrictions" value="NONE"></div>
                                     <div class="mb-2"><label class="form-label">Endorsements (DCD)</label><input type="text" class="form-control" name="ca_endorsements" value="NONE"></div>
+
+                                    <div class="mb-2">
+                                        <label class="form-label">Donor (DDK)</label>
+                                        <select class="form-select" name="ca_ddk">
+                                            <option value="" selected>-- Select Donor --</option>
+                                            <option value="YES">YES</option>
+                                            <option value="NO">NO</option>
+                                        </select>
+                                    </div>
                                     
                                     <!-- DYNAMIC BARCODE OPTIONS -->
                                     <div class="mb-2">
@@ -295,6 +311,22 @@
                                         <select class="form-select" name="ca_export_resolution">
                                             <option value="2X">Standard (2X)</option>
                                             <option value="6X" selected>High Quality (6X)</option>
+                                        </select>
+                                    </div>
+
+                                    <!-- OPTIONAL SECTION -->
+                                    <hr class="border-secondary my-3">
+                                    <div class="text-warning fw-bold small mb-2">OPTIONAL</div>
+                                    <div class="mb-2">
+                                        <label class="form-label">Hair Colour (DAZ)</label>
+                                        <select class="form-select" name="ca_hair">
+                                            <option value="" selected>Choose the type of hair colour you want</option>
+                                            <option value="BAL">BAL - Bald</option>
+                                            <option value="BLK">BLK - Black</option>
+                                            <option value="BLN">BLN - Blonde</option>
+                                            <option value="BRO">BRO - Brown</option>
+                                            <option value="RED">RED - Red</option>
+                                            <option value="WHI">WHI - White</option>
                                         </select>
                                     </div>
                                 </div>
