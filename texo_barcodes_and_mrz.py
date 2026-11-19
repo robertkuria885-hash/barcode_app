@@ -581,7 +581,10 @@ def api_generate_barcode():
             height = "".join([c for c in sanitize_input(form_data.get('height', '')) if c.isdigit()])
             weight = "".join([c for c in sanitize_input(form_data.get('weight', '')) if c.isdigit()])
             eyes = sanitize_input(form_data.get('eyes', '')).upper()
-            hair = sanitize_input(form_data.get('hair', '')).upper()
+            
+            raw_hair = sanitize_input(form_data.get('hair', '')).strip().upper()
+            hair = raw_hair if raw_hair and raw_hair != 'NONE' else ''
+            
             address = sanitize_input(form_data.get('address', ''))
             city = sanitize_input(form_data.get('city', ''))
             
@@ -591,6 +594,9 @@ def api_generate_barcode():
             sex = sanitize_input(form_data.get('sex', ''))
             dcf = sanitize_input(form_data.get('dcf', 'USA-A89234110')).upper()
             dcg = "USA"
+
+            dda_choice = sanitize_input(form_data.get('dda', '')).strip().upper()
+            ddk_choice = sanitize_input(form_data.get('ddk', '')).strip().upper()
 
             columns_input = sanitize_input(form_data.get('pdf_columns', 'Auto'))
             columns = (int(columns_input) - 2) if columns_input.isdigit() and 3 <= int(columns_input) <= 30 else (int(columns_input) if columns_input.isdigit() and 1 <= int(columns_input) <= 30 else None)
@@ -622,8 +628,15 @@ def api_generate_barcode():
             if dcg: lines.append(f"DCG{dcg}")
             if sex: lines.append(f"DBC{sex}")
             
-            lines.append("DDAF")
-            lines.append("DDK1")
+            if dda_choice == 'YES':
+                lines.append("DDAF")
+            elif dda_choice == 'NO':
+                lines.append("DDAN")
+
+            if ddk_choice == 'YES':
+                lines.append("DDK1")
+            elif ddk_choice == 'NO':
+                lines.append("DDK0")
 
             payload_str = "\n".join(lines) + "\n"
             payload = payload_str.encode('latin1')
@@ -665,7 +678,10 @@ def api_generate_barcode():
             height = "".join([c for c in sanitize_input(form_data.get('ca_height', '')) if c.isdigit()])
             weight = "".join([c for c in sanitize_input(form_data.get('ca_weight', '')) if c.isdigit()])
             eyes = sanitize_input(form_data.get('ca_eyes', '')).upper()
-            hair = sanitize_input(form_data.get('ca_hair', '')).upper()
+            
+            raw_ca_hair = sanitize_input(form_data.get('ca_hair', '')).strip().upper()
+            hair = raw_ca_hair if raw_ca_hair and raw_ca_hair != 'NONE' else ''
+            
             address = sanitize_input(form_data.get('ca_address', ''))
             city = sanitize_input(form_data.get('ca_city', ''))
             
@@ -676,6 +692,8 @@ def api_generate_barcode():
             sex = sanitize_input(form_data.get('ca_sex', ''))
             dcf = sanitize_input(form_data.get('ca_dcf', 'CAN-H12345678')).upper()
             dcg = "CAN"
+
+            ca_ddk_choice = sanitize_input(form_data.get('ca_ddk', '')).strip().upper()
 
             columns_input = sanitize_input(form_data.get('ca_pdf_columns', 'Auto'))
             columns = (int(columns_input) - 2) if columns_input.isdigit() and 3 <= int(columns_input) <= 30 else (int(columns_input) if columns_input.isdigit() and 1 <= int(columns_input) <= 30 else None)
@@ -706,6 +724,11 @@ def api_generate_barcode():
             if dcf: lines.append(f"DCF{dcf}")
             if dcg: lines.append(f"DCG{dcg}")
             if sex: lines.append(f"DBC{sex}")
+
+            if ca_ddk_choice == 'YES':
+                lines.append("DDK1")
+            elif ca_ddk_choice == 'NO':
+                lines.append("DDK0")
 
             payload_str = "\n".join(lines) + "\n"
             payload = payload_str.encode('latin1')
