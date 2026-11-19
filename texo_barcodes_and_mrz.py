@@ -42,11 +42,16 @@ else:
     app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(basedir, "texo_app.db")}?timeout=20'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# PRODUCTION SECURITY: Auto-enable secure cookies if environment is production or using HTTPS
-IS_PRODUCTION = os.getenv('FLASK_ENV') == 'production'
+# PRODUCTION SECURITY: Always enforce HTTPS secure persistent cookies on Render
+IS_PRODUCTION = os.getenv('FLASK_ENV') == 'production' or bool(os.getenv('RENDER'))
 app.config['SESSION_COOKIE_SECURE'] = IS_PRODUCTION
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=30)
+app.config['REMEMBER_COOKIE_DURATION'] = timedelta(days=30)
+app.config['REMEMBER_COOKIE_SECURE'] = IS_PRODUCTION
+app.config['REMEMBER_COOKIE_HTTPONLY'] = True
+app.config['REMEMBER_COOKIE_SAMESITE'] = 'Lax'
 
 db = SQLAlchemy(app)
 login_manager = LoginManager()
@@ -355,6 +360,7 @@ def login():
         password = request.form.get('password', '')
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password, password):
+            session.permanent = True
             login_user(user, remember=True)
             try:
                 temp_id = session.get('visitor_session_id')
@@ -400,6 +406,7 @@ def register():
                     new_user.credits += int(tx.amount)
                 db.session.commit()
             
+            session.permanent = True
             login_user(new_user, remember=True)
         except Exception:
             db.session.rollback()
